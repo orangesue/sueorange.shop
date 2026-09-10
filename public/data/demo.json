@@ -1,0 +1,115 @@
+{
+  "generatedAt": "2026-09-10T12:00:00.000Z",
+  "posts": [
+    {
+      "id": "demo-1",
+      "tid": "demo-1",
+      "createdAt": "2013-09-01T12:30:00.000Z",
+      "text": "开学第一天。新校服有点大，班主任说我坐在最后一排正好挡黑板的字。",
+      "images": [],
+      "comments": [
+        { "author": "小明", "text": "最后一排靠窗是风水宝地", "createdAt": "2013-09-01T13:00:00.000Z" }
+      ],
+      "likes": 3,
+      "deleted": false,
+      "source": "msglist",
+      "repost": null
+    },
+    {
+      "id": "demo-2",
+      "tid": "demo-2",
+      "createdAt": "2015-06-08T09:10:00.000Z",
+      "text": "考完了。走出考场那一刻天气特别好，好像所有事情都还有机会。",
+      "images": ["data/demo/scene-1.svg"],
+      "comments": [
+        { "author": "阿泽", "text": "恭喜解放！", "createdAt": "2015-06-08T10:00:00.000Z" },
+        { "author": "同桌", "text": "记得把笔记还我", "createdAt": "2015-06-08T11:20:00.000Z" }
+      ],
+      "likes": 27,
+      "deleted": true,
+      "source": "feeds",
+      "repost": null
+    },
+    {
+      "id": "demo-3",
+      "tid": "demo-3",
+      "createdAt": "2018-09-10T02:00:00.000Z",
+      "text": "大学报到的火车上，窗外一片一片的稻田。\n行李箱里塞了三本书，一本都没读完。",
+      "images": ["data/demo/scene-2.svg", "data/demo/scene-3.svg"],
+      "comments": [],
+      "likes": 15,
+      "deleted": false,
+      "source": "msglist",
+      "repost": null
+    },
+    {
+      "id": "demo-4",
+      "tid": "demo-4",
+      "createdAt": "2020-02-14T15:45:00.000Z",
+      "text": "在家待到不知今夕何夕，把房间彻底整理了一遍，从抽屉里翻出初中的日记本。",
+      "images": [],
+      "comments": [
+        { "author": "妈妈", "text": "终于肯收拾房间了", "createdAt": "2020-02-14T16:00:00.000Z" }
+      ],
+      "likes": 9,
+      "deleted": true,
+      "source": "feeds",
+      "repost": null
+    },
+    {
+      "id": "demo-5",
+      "tid": "demo-5",
+      "createdAt": "2021-07-01T10:20:00.000Z",
+      "text": "第一天实习，工位在靠窗的位置。带我的老师说，看不懂的代码先别急着改。",
+      "images": [],
+      "comments": [],
+      "likes": 12,
+      "deleted": false,
+      "source": "both",
+      "repost": null
+    },
+    {
+      "id": "demo-6",
+      "tid": "demo-6",
+      "createdAt": "2022-05-20T13:05:00.000Z",
+      "text": "傍晚的操场。有人放风筝，有人跑步，有人只是躺着看天。",
+      "images": ["data/demo/scene-1.svg", "data/demo/scene-2.svg", "data/demo/scene-3.svg"],
+      "comments": [
+        { "author": "舍友", "text": "这个天色绝了", "createdAt": "2022-05-20T13:30:00.000Z" }
+      ],
+      "likes": 41,
+      "deleted": false,
+      "source": "msglist",
+      "repost": null
+    },
+    {
+      "id": "demo-7",
+      "tid": "demo-7",
+      "createdAt": "2024-01-01T00:01:00.000Z",
+      "text": "新年快乐。今年想做的事：把该保存的东西都保存下来。",
+      "images": [],
+      "comments": [
+        { "author": "阿泽", "text": "新年快乐", "createdAt": "2024-01-01T00:05:00.000Z" }
+      ],
+      "likes": 18,
+      "deleted": false,
+      "source": "msglist",
+      "repost": null
+    },
+    {
+      "id": "demo-8",
+      "tid": "demo-8",
+      "createdAt": "2019-11-11T08:00:00.000Z",
+      "text": "",
+      "images": [],
+      "comments": [
+        { "author": "路人", "text": "这条只剩互动记录了", "createdAt": "2019-11-11T09:00:00.000Z" }
+      ],
+      "likes": 2,
+      "deleted": true,
+      "source": "feeds",
+      "repost": null
+    }
+  ]
+}
+

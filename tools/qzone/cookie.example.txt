@@ -1,0 +1,11 @@
+# 把这一行替换成你从浏览器 F12 里复制的完整 Cookie 字符串，然后另存为
+# <仓库根目录>/secrets/cookie.txt （这个目录已被 .gitignore 排除，不会上传）
+#
+# 获取方法：浏览器登录 QQ 空间 -> F12 -> Network -> 随便点一个 taotao.qq.com 或
+# ic2.qzone.qq.com 的请求 -> Request Headers -> 复制 Cookie 整行。
+#
+# 必须包含的字段：uin 或 p_uin、skey、p_skey。
+#
+# 安全提醒：Cookie 等同于账号权限。只放在本机，不要发给任何人、不要提交到仓库。
+p_uin=o0000000000; uin=o0000000000; skey=@AAAAAAAA; p_skey=BBBBBBBB
+
