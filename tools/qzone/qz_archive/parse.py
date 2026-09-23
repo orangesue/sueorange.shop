@@ -14,9 +14,19 @@ from typing import Any, Iterable
 
 from bs4 import BeautifulSoup
 
+try:  # 解析互动消息返回的 JS 对象字面量（键不带引号、值用单引号）
+    import json5
+except ImportError:  # pragma: no cover - 缺依赖时退化成正则兜底
+    json5 = None  # type: ignore[assignment]
+
 CST = timezone(timedelta(hours=8))
 
-JSONP_PATTERN = re.compile(r"^\s*[A-Za-z_$][\w$]*\s*\((.*)\)\s*;?\s*$", re.DOTALL)
+CALLBACK_PATTERN = re.compile(r"^\s*[A-Za-z_$][\w$]*\s*\((.*)\)\s*;?\s*$", re.DOTALL)
+# 腾讯返回的是 JS 对象字面量，里面会出现 undefined 这类 JSON5 也不认的值
+UNDEFINED_VALUE_PATTERN = re.compile(r"([:,\[])\s*undefined\b")
+NAN_VALUE_PATTERN = re.compile(r"([:,\[])\s*NaN\b")
+HTML_LITERAL_PATTERN = re.compile(r"html\s*:\s*'((?:[^'\\]|\\.)*)'")
+ABSTIME_LITERAL_PATTERN = re.compile(r"abstime\s*:\s*'(\d+)'")
 TIME_PATTERN = re.compile(
     r"(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日"
     r"(?:\s*(\d{1,2})\s*[:：]\s*(\d{2}))?"
@@ -35,10 +45,108 @@ def decode_bytes(payload: bytes) -> str:
     return payload.decode("utf-8", errors="replace")
 
 
-def strip_jsonp(text: str) -> str:
-    """_preloadCallback({...}); -> {...}"""
-    match = JSONP_PATTERN.match(text)
-    return match.group(1) if match else text
+def strip_callback(text: str) -> str:
+    """_preloadCallback({...}); / _Callback({...}) -> {...}"""
+    stripped = text.strip()
+    match = CALLBACK_PATTERN.match(stripped)
+    return match.group(1) if match else stripped
+
+
+# 早期版本用的名字，保留以免外部调用断掉
+strip_jsonp = strip_callback
+
+
+def parse_feeds_payload(text: str) -> dict[str, Any]:
+    """互动消息接口返回的是 `_Callback({...})`，里面是 JS 对象字面量而非合法 JSON。
+
+    优先用 json5 正确解析；失败时退化成「把所有 html 字段抠出来」，
+    至少不会一条都拿不到。
+    """
+    inner = strip_callback(text)
+
+    if json5 is not None:
+        try:
+            normalized = UNDEFINED_VALUE_PATTERN.sub(r"\1 null", inner)
+            normalized = NAN_VALUE_PATTERN.sub(r"\1 null", normalized)
+            payload = json5.loads(normalized)
+            if isinstance(payload, dict):
+                return payload
+        except Exception as error:  # noqa: BLE001 - 任何解析失败都走兜底
+            LAST_JSON5_ERROR[0] = str(error)
+
+    return _feeds_regex_fallback(inner)
+
+
+# 上一次 json5 解析失败的原因，排查接口变化时很有用
+LAST_JSON5_ERROR: list[str] = [""]
+
+JS_SIMPLE_ESCAPES = {
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+    "b": "\b",
+    "f": "\f",
+    "/": "/",
+    "'": "'",
+    '"': '"',
+    "\\": "\\",
+    "0": "\0",
+}
+
+
+def unescape_js_string(text: str) -> str:
+    """还原 JS 字符串字面量里的转义：\\x3C -> <、\\/ -> /、\\u4e2d -> 中。"""
+    out: list[str] = []
+    index = 0
+    length = len(text)
+
+    while index < length:
+        char = text[index]
+        if char != "\\" or index + 1 >= length:
+            out.append(char)
+            index += 1
+            continue
+
+        marker = text[index + 1]
+
+        if marker == "x" and index + 3 < length:
+            try:
+                out.append(chr(int(text[index + 2 : index + 4], 16)))
+                index += 4
+                continue
+            except ValueError:
+                pass
+
+        if marker == "u" and index + 5 < length:
+            try:
+                out.append(chr(int(text[index + 2 : index + 6], 16)))
+                index += 6
+                continue
+            except ValueError:
+                pass
+
+        out.append(JS_SIMPLE_ESCAPES.get(marker, marker))
+        index += 2
+
+    return "".join(out)
+
+
+def _feeds_regex_fallback(inner: str) -> dict[str, Any]:
+    """兜底解析：直接抠 html / abstime 字面量，凑成和正常结构一样的形状。"""
+    items: list[dict[str, Any]] = []
+    timestamps = ABSTIME_LITERAL_PATTERN.findall(inner)
+
+    for index, match in enumerate(HTML_LITERAL_PATTERN.finditer(inner)):
+        markup = unescape_js_string(match.group(1))
+        items.append(
+            {
+                "html": markup,
+                "abstime": timestamps[index] if index < len(timestamps) else "",
+                "_fallback": True,
+            }
+        )
+
+    return {"data": {"main": {"_fallback": True}, "data": items}}
 
 
 def parse_msglist_jsonp(text: str) -> dict[str, Any]:
@@ -281,4 +389,148 @@ def parse_feeds_html(text: str) -> list[dict[str, Any]]:
             }
         )
 
+    return posts
+
+
+# ---------- 统一时间线（format=json 的互动记录） ----------
+
+FEED_CONTENT_SELECTORS = (
+    "p.txt-box-title",
+    "h4.f-title",
+    "div.txt-prewrap",
+    "div.f-info-content",
+    "div.f-info",
+    "div.f-single-content",
+    "div.f_msg",
+)
+
+DELETED_MARKERS = (
+    "已删除",
+    "被删除",
+    "已不存在",
+    "已失效",
+    "无权查看",
+    "不可访问",
+    "暂不支持查看",
+    "内容暂不支持",
+)
+
+OBJECT_ID_PATTERNS = (
+    re.compile(r"(?:tid|curkey|unikey|topicId)=([A-Za-z0-9_\-]+)"),
+    re.compile(r"/mood/([A-Za-z0-9_\-]+)"),
+    re.compile(r"blogid=(\d+)"),
+)
+
+
+def extract_object_id(markup: str) -> str:
+    for pattern in OBJECT_ID_PATTERNS:
+        match = pattern.search(markup)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def strip_author_prefix(text: str, author: str) -> str:
+    if not author:
+        return text
+    # 作者名和冒号之间可能有空格，比如「橘子 ： 正文」
+    pattern = re.compile(rf"^\s*{re.escape(author)}\s*[：:]\s*")
+    return pattern.sub("", text, count=1).strip()
+
+
+def extract_author_uin(soup: Any) -> str:
+    """互动记录里 a.nickname 才是说说作者，拿它的 QQ 号。"""
+    node = soup.select_one("a.nickname")
+    if node is None:
+        return ""
+
+    link = node.get("link") or ""
+    if link.startswith("nameCard_"):
+        return link[len("nameCard_") :]
+
+    href = node.get("href") or ""
+    match = re.search(r"user\.qzone\.qq\.com/(\d+)", href)
+    return match.group(1) if match else ""
+
+
+PLACEHOLDER_MARKERS = ("功能内测中", "内容暂不支持查看", "暂不支持查看")
+
+
+def parse_feed_item(item: dict[str, Any], self_uin: str) -> dict[str, Any] | None:
+    """把统一时间线里的一条互动记录（JSON 格式）转成站点记录。"""
+    markup = item.get("html") or ""
+    if not markup:
+        return None
+
+    soup = BeautifulSoup(markup, "html.parser")
+
+    author_node = soup.select_one("a.nickname")
+    author = clean_html_text(author_node.get_text(" ", strip=True)) if author_node else ""
+    author_uin = extract_author_uin(soup)
+
+    # 关键过滤：互动流里混着好友的动态/评论，只有「作者是我」的才算我的说说
+    if author_uin and str(author_uin) != str(self_uin):
+        return None
+
+    state_node = soup.select_one("span.state")
+    state = clean_html_text(state_node.get_text(" ", strip=True)) if state_node else ""
+
+    text = ""
+    for selector in FEED_CONTENT_SELECTORS:
+        node = soup.select_one(selector)
+        candidate = clean_html_text(node.get_text(" ", strip=True)) if node else ""
+        if candidate:
+            text = candidate
+            break
+
+    text = strip_author_prefix(text, author)
+
+    # 原说说已被腾讯清空、只剩占位提示的，正文留空，让页面显示「只剩互动痕迹」
+    if any(marker in text for marker in PLACEHOLDER_MARKERS):
+        text = ""
+
+    images: list[str] = []
+    for img in soup.find_all("img"):
+        src = img.get("src") or img.get("data-src") or ""
+        if not isinstance(src, str) or not src.startswith("http"):
+            continue
+        if any(bad in src for bad in ("qlogo", "avatar", "face", "emotion", "sprite", "/ac/")):
+            continue
+        if src not in images:
+            images.append(src)
+
+    created = unix_to_iso(item.get("abstime"))
+    if not text and not images and not created:
+        return None
+
+    tid = str(item.get("key") or extract_object_id(markup) or "").strip()
+    deleted = any(marker in (state + " " + text) for marker in DELETED_MARKERS)
+
+    return {
+        "id": tid,
+        "tid": tid,
+        "createdAt": created,
+        "text": text,
+        "images": images,
+        "comments": [],
+        "likes": 0,
+        "deleted": deleted,
+        "source": "feeds",
+        "repost": None,
+        "state": state,
+        "author": author,
+        "authorUin": author_uin,
+    }
+
+
+def parse_feed_items(payload: dict[str, Any], self_uin: str) -> list[dict[str, Any]]:
+    outer = payload.get("data") or {}
+    items = outer.get("data") or []
+    posts: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        post = parse_feed_item(item, self_uin)
+        if post:
+            posts.append(post)
     return posts

@@ -13,9 +13,17 @@ from typing import Any, Iterator
 import requests
 
 from .cookie import Credentials
-from .parse import decode_bytes, parse_feeds_html, parse_msglist_to_posts
+from .parse import (
+    decode_bytes,
+    parse_feed_items,
+    parse_feeds_payload,
+    parse_msglist_to_posts,
+)
 
 QZONE_BASE = "https://user.qzone.qq.com"
+
+# 腾讯偶尔会用这些状态码限流，重试通常能过去
+RETRY_STATUS = {429, 500, 501, 502, 503, 504}
 
 # 未删除的说说
 MSGLIST_PATH = "/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_msglist_v6"
@@ -32,10 +40,14 @@ DESKTOP_UA = (
 class QzoneClient:
     credentials: Credentials
     timeout: int = 20
-    pause: float = 0.8
+    pause: float = 3.0
+    retries: int = 4
+    # 被限流（501）时宁可等久一点：试探发现秒级重试完全无效，反而会延长封禁
+    backoff: float = 60.0
     msglist_url: str = QZONE_BASE + MSGLIST_PATH
     feeds_url: str = QZONE_BASE + FEEDS_PATH
     session: requests.Session = field(init=False)
+    last_error: str = ""
 
     def __post_init__(self) -> None:
         self.session = requests.Session()
@@ -51,15 +63,32 @@ class QzoneClient:
     # ---------- 底层请求 ----------
 
     def _get_text(self, url: str, params: dict[str, Any]) -> str:
-        response = self.session.get(url, params=params, timeout=self.timeout)
-        response.raise_for_status()
-        text = decode_bytes(response.content)
+        last_error: Exception | None = None
 
-        # 登录失效时腾讯会返回登录页而不是数据，早点报出来比默默抓空好
-        if "login" in response.url and "qzone" not in text[:2000]:
-            raise RuntimeError("登录状态已失效，请重新复制 Cookie")
+        for attempt in range(1, self.retries + 1):
+            try:
+                response = self.session.get(url, params=params, timeout=self.timeout)
+            except requests.RequestException as error:
+                last_error = error
+            else:
+                if response.status_code in RETRY_STATUS:
+                    last_error = RuntimeError(
+                        f"{response.status_code} {response.reason}（多半是限流）"
+                    )
+                else:
+                    response.raise_for_status()
+                    text = decode_bytes(response.content)
+                    # 登录失效时腾讯会返回登录页而不是数据
+                    if "login" in response.url and "qzone" not in text[:2000]:
+                        raise RuntimeError("登录状态已失效，请重新复制 Cookie")
+                    return text
 
-        return text
+            if attempt < self.retries:
+                wait = self.backoff * attempt
+                print(f"    [重试 {attempt}/{self.retries - 1}] {last_error}，{wait:.0f} 秒后再试")
+                time.sleep(wait)
+
+        raise RuntimeError(f"连续 {self.retries} 次请求都失败：{last_error}")
 
     # ---------- 通道一：未删除说说 ----------
 
@@ -86,55 +115,104 @@ class QzoneClient:
 
     # ---------- 通道二：互动消息列表 ----------
 
-    def fetch_feeds_page(self, begin_time: int, end_time: int) -> str:
+    def fetch_feeds_page(self, offset: int, count: int = 30) -> str:
+        """统一时间线：含互动记录、以及已删除/不可见内容的占位。"""
         params = {
             "uin": self.credentials.uin,
-            "begin_time": begin_time,
-            "end_time": end_time,
+            "begin_time": "0",
+            "end_time": "0",
             "getappnotification": 1,
             "getnotifi": 1,
-            "hasunreadnotice": 1,
-            "type": "all",
-            "refer": "msg",
+            "has_get_key": 0,
+            "offset": offset,
+            "set": 0,
+            "count": count,
+            "useutf8": 1,
+            "outputhtmlfeed": 1,
+            "scope": 1,
+            "format": "json",
             "g_tk": self.credentials.gtk,
         }
         return self._get_text(self.feeds_url, params)
 
-    def crawl_msglist(self, *, max_pages: int = 60, page_size: int = 20) -> tuple[list[dict], list[str]]:
-        """翻完未删除说说，返回 (记录列表, 原始响应列表)。"""
+    def crawl_msglist(
+        self,
+        *,
+        max_pages: int = 60,
+        page_size: int = 20,
+        start_pos: int = 0,
+        on_page: Any = None,
+    ) -> tuple[list[dict], list[str], int]:
+        """翻未删除说说，返回 (记录列表, 原始响应列表, 下一页 pos)。
+
+        on_page(page_posts, next_pos) 每抓完一页回调一次，用于落盘，避免被限流后全军覆没。
+        """
         posts: list[dict] = []
         raw_pages: list[str] = []
+        pos = start_pos
 
-        for text in self.iter_msglist(max_pages=max_pages, page_size=page_size):
+        for _ in range(max_pages):
+            try:
+                text = self.fetch_msglist_page(pos=pos, num=page_size)
+            except RuntimeError as error:
+                # 中途被限流时不要把已经抓到的丢掉，交给调用方决定怎么办
+                self.last_error = str(error)
+                break
             raw_pages.append(text)
             page_posts = parse_msglist_to_posts(text)
             if not page_posts:
                 break
             posts.extend(page_posts)
+            pos += page_size
+            if on_page is not None:
+                on_page(list(posts), pos)
             if len(page_posts) < page_size:
                 break
+            time.sleep(self.pause)
 
-        return posts, raw_pages
+        return posts, raw_pages, pos
 
-    def crawl_feeds(self, *, max_pages: int = 40) -> tuple[list[dict], list[str]]:
-        """沿时间轴往前翻互动消息，返回 (记录列表, 原始响应列表)。"""
+    def crawl_feeds(
+        self,
+        *,
+        max_pages: int = 120,
+        page_size: int = 30,
+        on_page: Any = None,
+    ) -> tuple[list[dict], list[str], int]:
+        """沿时间轴往前翻互动消息，返回 (记录列表, 原始响应列表, 下一页 offset)。
+
+        on_page(page_posts, 页码, 本页最早时间) 每抓完一页回调一次，便于边跑边落盘。
+        """
         posts: list[dict] = []
         raw_pages: list[str] = []
-        begin_time = int(time.time())
-        end_time = 0
-        seen_keys: set[tuple[str, str]] = set()
+        seen_keys: set[str] = set()
 
-        for _ in range(max_pages):
-            text = self.fetch_feeds_page(begin_time, end_time)
+        for page in range(max_pages):
+            text = ""
+            payload: dict[str, Any] = {}
+            for attempt in range(self.retries + 1):
+                text = self.fetch_feeds_page(offset=page * page_size, count=page_size)
+                payload = parse_feeds_payload(text)
+                code = payload.get("code")
+                if code in (None, 0):
+                    break
+                wait = self.backoff * (attempt + 1)
+                print(f"    [忙] code={code} {payload.get('message')}，等 {wait:.0f} 秒")
+                time.sleep(wait)
+            else:
+                self.last_error = f"连续 {self.retries + 1} 次 network busy"
+                break
+
             raw_pages.append(text)
-            page_posts = parse_feeds_html(text)
+            page_posts = parse_feed_items(payload, self.credentials.uin)
 
             fresh = []
             for post in page_posts:
-                key = (post.get("createdAt", ""), post.get("text", "")[:80])
-                if key in seen_keys:
+                key = (post.get("tid", ""), post.get("createdAt", ""), post.get("text", "")[:80])
+                key_str = "|".join(key)
+                if key_str in seen_keys:
                     continue
-                seen_keys.add(key)
+                seen_keys.add(key_str)
                 fresh.append(post)
 
             if not fresh:
@@ -142,19 +220,16 @@ class QzoneClient:
 
             posts.extend(fresh)
 
-            earliest = min(
-                (post["createdAt"] for post in fresh if post.get("createdAt")),
-                default="",
-            )
-            if not earliest:
-                break
+            if on_page is not None:
+                earliest = min(
+                    (post.get("createdAt") or "" for post in fresh if post.get("createdAt")),
+                    default="",
+                )
+                on_page(list(posts), page + 1, earliest)
 
-            begin_time = _iso_to_unix(earliest) - 1
-            if begin_time <= 0:
-                break
             time.sleep(self.pause)
 
-        return posts, raw_pages
+        return posts, raw_pages, (len(raw_pages) * page_size)
 
 
 def _iso_to_unix(value: str) -> int:
@@ -172,4 +247,3 @@ def dump_raw(directory: Path, name: str, pages: list[str]) -> None:
     for index, page in enumerate(pages, start=1):
         target = directory / f"{name}-{index:03d}.txt"
         target.write_text(page, encoding="utf-8")
-

@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { siteConfig } from '../site.config'
+import { profile } from '../content/profile'
 
 function navClass({ isActive }: { isActive: boolean }): string {
   return [
@@ -17,10 +17,10 @@ export default function Layout() {
         <div className="mx-auto flex w-full max-w-4xl items-center justify-between gap-4 px-4 py-3">
           <NavLink to="/" className="flex items-center gap-2 focus-ring rounded-full">
             <span className="grid h-7 w-7 place-items-center rounded-full bg-ember-500/15 text-sm font-semibold text-ember-400">
-              {siteConfig.title.slice(0, 1).toUpperCase()}
+              {profile.name.slice(0, 1)}
             </span>
             <span className="text-sm font-medium tracking-wide text-slate-200">
-              {siteConfig.title}
+              {profile.name}
             </span>
           </NavLink>
 
@@ -41,10 +41,9 @@ export default function Layout() {
 
       <footer className="border-t border-ink-800/80 py-6">
         <div className="mx-auto w-full max-w-4xl px-4 text-center text-xs text-slate-500">
-          {siteConfig.footer} · 归档数据仅保存在本地，不会随仓库上传
+          {profile.name} · {profile.enName} · {profile.footerNote}
         </div>
       </footer>
     </div>
   )
 }
-

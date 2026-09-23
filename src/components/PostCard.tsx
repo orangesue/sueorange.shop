@@ -65,6 +65,8 @@ export default function PostCard({ post, onOpenImage }: Props) {
                 src={url}
                 alt=""
                 loading="lazy"
+                // 腾讯图床会拦非 qq.com 的 Referer：不带 Referer 才给真图
+                referrerPolicy="no-referrer"
                 className="h-40 w-full object-cover transition-transform duration-300 group-hover:scale-[1.03] sm:h-48"
               />
             </button>
@@ -107,4 +109,3 @@ export default function PostCard({ post, onOpenImage }: Props) {
     </article>
   )
 }
-

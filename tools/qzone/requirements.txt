@@ -1,3 +1,4 @@
 requests>=2.31.0
 beautifulsoup4>=4.12.0
-
+# 互动消息接口返回的是 JS 对象字面量（键不带引号），标准 json 解析不了
+json5>=0.9.14

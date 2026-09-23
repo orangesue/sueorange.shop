@@ -6,7 +6,7 @@ import Timeline from '../components/Timeline'
 import { useArchive } from '../hooks/useArchive'
 import { computeStats, filterPosts } from '../lib/archive'
 import { formatDateTime } from '../lib/format'
-import { siteConfig } from '../site.config'
+import { archiveConfig } from '../content/profile'
 import type { ArchiveFilter } from '../types'
 
 type LightboxState = { images: string[]; index: number } | null
@@ -27,9 +27,9 @@ export default function Archive() {
   return (
     <div className="space-y-6">
       <header className="space-y-2">
-        <h1 className="text-3xl font-semibold text-slate-50">{siteConfig.archive.title}</h1>
+        <h1 className="text-3xl font-semibold text-slate-50">{archiveConfig.title}</h1>
         <p className="max-w-2xl text-sm leading-relaxed text-slate-400">
-          {siteConfig.archive.intro}
+          {archiveConfig.intro}
         </p>
         {data?.generatedAt ? (
           <p className="text-xs text-slate-600">
@@ -96,4 +96,3 @@ export default function Archive() {
     </div>
   )
 }
-

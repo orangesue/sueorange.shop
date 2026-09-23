@@ -50,6 +50,7 @@ export default function Lightbox({ images, index, onClose, onIndexChange }: Prop
       <img
         src={images[index]}
         alt=""
+        referrerPolicy="no-referrer"
         onClick={(event) => event.stopPropagation()}
         className="max-h-[80vh] max-w-full rounded-xl object-contain shadow-2xl"
       />
@@ -88,4 +89,3 @@ export default function Lightbox({ images, index, onClose, onIndexChange }: Prop
     </div>
   )
 }
-

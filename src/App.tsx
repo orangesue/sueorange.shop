@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import Archive from './pages/Archive'
 import Home from './pages/Home'
+import ProjectDetail from './pages/ProjectDetail'
 
 /** 站点部署在子路径（GitHub Pages）时，路由也要跟着带上前缀 */
 function routerBasename(): string {
@@ -15,6 +16,7 @@ export default function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<Home />} />
+          <Route path="/projects/:slug" element={<ProjectDetail />} />
           <Route path="/archive" element={<Archive />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
@@ -22,4 +24,3 @@ export default function App() {
     </BrowserRouter>
   )
 }
-
